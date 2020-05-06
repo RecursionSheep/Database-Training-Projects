@@ -5,6 +5,14 @@ using namespace std;
 map<string, vector<pair<int, int> > > mvcc;
 map<string, bool> locked;
 pthread_mutex_t mutex_lock;
+pthread_barrier_t barrier;
+
+class operation {
+public:
+	int type;
+	string var1, var2, arith;
+	int val;
+};
 
 int mvcc_read(string var, int txn_time) {
 	//cout << var << endl;
@@ -37,6 +45,8 @@ void *thread_work(void *rank) {
 	map<string, int> temp_write;
 	set<string> lock_var;
 	string txn;
+	pthread_barrier_wait(&barrier);
+	vector<operation> ops;
 	while (op >> txn) {
 		if (txn != "BEGIN") break;
 		int id;
@@ -45,27 +55,42 @@ void *thread_work(void *rank) {
 		result << id << ", BEGIN, " << txn_time << ',' << endl;
 		temp_write.clear();
 		lock_var.clear();
+		string output = "";
+		ops.clear();
 		while (1) {
-			string op_name;
-			string var;
+			string op_name, var;
 			op >> op_name;
 			if (op_name == "READ") {
 				op >> var;
-				if (temp_write.find(var) != temp_write.end()) {
-					int val = temp_write[var];
-					result << id << ", " << var << ", " << clock() << ", " << val << endl;
-				} else {
-					pthread_mutex_lock(&mutex_lock);
-					int val = mvcc_read(var, txn_time);
-					pthread_mutex_unlock(&mutex_lock);
-					result << id << ", " << var << ", " << clock() << ", " << val << endl;
-				}
+				ops.push_back((operation){0, var, "", "", 0});
 			} else if (op_name == "SET") {
 				op >> var;
 				var.pop_back();
 				string var2, arith;
-				int val1, val2;
-				op >> var2 >> arith >> val2;
+				int val;
+				op >> var2 >> arith >> val;
+				ops.push_back((operation){1, var, var2, arith, val});
+			} else if (op_name == "COMMIT") {
+				op >> id;
+				break;
+			}
+		}
+		int cnt = 0;
+		while (cnt < ops.size()) {
+			if (ops[cnt].type == 0) {
+				string var = ops[cnt].var1;
+				if (temp_write.find(var) != temp_write.end()) {
+					int val = temp_write[var];
+					output = output + to_string(id) + ", " + var + ", " + to_string(clock()) + ", " + to_string(val) + "\n";
+				} else {
+					pthread_mutex_lock(&mutex_lock);
+					int val = mvcc_read(var, txn_time);
+					pthread_mutex_unlock(&mutex_lock);
+					output = output + to_string(id) + ", " + var + ", " + to_string(clock()) + ", " + to_string(val) + "\n";
+				}
+			} else {
+				string var1 = ops[cnt].var1, var2 = ops[cnt].var2, arith = ops[cnt].arith;
+				int val1, val2 = ops[cnt].val;
 				if (temp_write.find(var2) != temp_write.end()) {
 					val1 = temp_write[var2];
 				} else {
@@ -74,24 +99,51 @@ void *thread_work(void *rank) {
 					pthread_mutex_unlock(&mutex_lock);
 				}
 				if (arith == "+") val1 += val2; else val1 -= val2;
+				clock_t start = clock();
+				bool deadlock = false;
+				while (1) {
+					pthread_mutex_lock(&mutex_lock);
+					if (!locked[var1]) {
+						pthread_mutex_unlock(&mutex_lock);
+						break;
+					}
+					pthread_mutex_unlock(&mutex_lock);
+					clock_t now = clock();
+					if ((double)(now - start) / CLOCKS_PER_SEC > .1) {
+						cout << "deadlock!" << endl;
+						deadlock = true;
+						break;
+					}
+				}
+				if (deadlock) {
+					pthread_mutex_lock(&mutex_lock);
+					for (auto it = lock_var.begin(); it != lock_var.end(); it ++)
+						locked[(*it)] = false;
+					pthread_mutex_unlock(&mutex_lock);
+					lock_var.clear();
+					temp_write.clear();
+					output = "";
+					cnt = 0;
+					continue;
+				}
 				pthread_mutex_lock(&mutex_lock);
-				while (locked[var]);
-				locked[var] = true;
-				temp_write[var] = val1;
-				mvcc_write(var, val1, clock());
-				lock_var.insert(var);
-				result << id << ", " << var << ", " << clock() << ", " << val1 << endl;
+				locked[var1] = true;
 				pthread_mutex_unlock(&mutex_lock);
-			} else if (op_name == "COMMIT") {
-				op >> id;
-				pthread_mutex_lock(&mutex_lock);
-				for (auto it = lock_var.begin(); it != lock_var.end(); it ++)
-					locked[(*it)] = false;
-				pthread_mutex_unlock(&mutex_lock);
-				result << id << ", END, " << clock() << ',' << endl;
-				break;
+				temp_write[var1] = val1;
+				mvcc_write(var1, val1, clock());
+				lock_var.insert(var1);
+				output = output + to_string(id) + ", " + var1 + ", " + to_string(clock()) + ", " + to_string(val1) + "\n";
 			}
+			cnt ++;
 		}
+		if (!lock_var.empty()) {
+			pthread_mutex_lock(&mutex_lock);
+			for (auto it = lock_var.begin(); it != lock_var.end(); it ++)
+				locked[(*it)] = false;
+			pthread_mutex_unlock(&mutex_lock);
+		}
+		result << output;
+		result << id << ", END, " << clock() << ',' << endl;
 	}
 	
 	op.close();
@@ -106,6 +158,7 @@ int main(int argc, char **argv) {
 	}
 	int thread_num = atoi(argv[1]);
 	pthread_mutex_init(&mutex_lock, nullptr);
+	pthread_barrier_init(&barrier, nullptr, thread_num);
 	
 	ifstream prepare;
 	prepare.open("data_prepare.txt", ios::in);
@@ -132,5 +185,6 @@ int main(int argc, char **argv) {
 		pthread_join(thread_handles[i], nullptr);
 	
 	pthread_mutex_destroy(&mutex_lock);
+	pthread_barrier_destroy(&barrier);
 	return 0;
 }
