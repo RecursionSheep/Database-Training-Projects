@@ -1,6 +1,7 @@
 #include <bits/stdc++.h>
 #include <pthread.h>
 using namespace std;
+using namespace chrono;
 
 #define DEADLOCK_TIMEOUT 0.0001
 
@@ -10,6 +11,7 @@ map<string, int> locked;
 // map: variable name -> thread locked
 pthread_mutex_t mutex_lock;
 pthread_barrier_t barrier;
+system_clock::time_point init_time;
 int global_txn_time;
 
 class operation {
@@ -60,7 +62,7 @@ void *thread_work(void *rank) {
 		global_txn_time ++;
 		int txn_time = global_txn_time;
 		pthread_mutex_unlock(&mutex_lock);
-		result << id << ", BEGIN, " << clock() << ',' << endl;
+		result << id << ", BEGIN, " << duration_cast<nanoseconds>(system_clock::now() - init_time).count() << ',' << endl;
 		temp_write.clear();
 		lock_var.clear();
 		string output = "";
@@ -89,12 +91,12 @@ void *thread_work(void *rank) {
 				string var = ops[cnt].var1;
 				if (temp_write.find(var) != temp_write.end()) {
 					int val = temp_write[var];
-					output = output + to_string(id) + ", " + var + ", " + to_string(clock()) + ", " + to_string(val) + "\n";
+					output = output + to_string(id) + ", " + var + ", " + to_string(duration_cast<nanoseconds>(system_clock::now() - init_time).count()) + ", " + to_string(val) + "\n";
 				} else {
 					pthread_mutex_lock(&mutex_lock);
 					int val = mvcc_read(var, txn_time);
 					pthread_mutex_unlock(&mutex_lock);
-					output = output + to_string(id) + ", " + var + ", " + to_string(clock()) + ", " + to_string(val) + "\n";
+					output = output + to_string(id) + ", " + var + ", " + to_string(duration_cast<nanoseconds>(system_clock::now() - init_time).count()) + ", " + to_string(val) + "\n";
 				}
 			} else {
 				string var1 = ops[cnt].var1, var2 = ops[cnt].var2, arith = ops[cnt].arith;
@@ -142,7 +144,7 @@ void *thread_work(void *rank) {
 				pthread_mutex_unlock(&mutex_lock);
 				temp_write[var1] = val1;
 				lock_var.insert(var1);
-				output = output + to_string(id) + ", " + var1 + ", " + to_string(clock()) + ", " + to_string(val1) + "\n";
+				output = output + to_string(id) + ", " + var1 + ", " + to_string(duration_cast<nanoseconds>(system_clock::now() - init_time).count()) + ", " + to_string(val1) + "\n";
 			}
 			cnt ++;
 		}
@@ -153,7 +155,7 @@ void *thread_work(void *rank) {
 			pthread_mutex_unlock(&mutex_lock);
 		}
 		result << output;
-		result << id << ", END, " << clock() << ',' << endl;
+		result << id << ", END, " << duration_cast<nanoseconds>(system_clock::now() - init_time).count() << ',' << endl;
 	}
 	
 	op.close();
@@ -186,6 +188,8 @@ int main(int argc, char **argv) {
 		mvcc[var] = vector<pair<int, int> >(1, make_pair(val, 0));
 	}
 	prepare.close();
+	
+	init_time = system_clock::now();
 	
 	pthread_t *thread_handles = new pthread_t[thread_num];
 	for (int i = 0; i < thread_num; i ++) {
