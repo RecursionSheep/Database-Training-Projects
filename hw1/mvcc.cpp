@@ -2,10 +2,15 @@
 #include <pthread.h>
 using namespace std;
 
+#define DEADLOCK_TIMEOUT 0.0001
+
 map<string, vector<pair<int, int> > > mvcc;
+// map: variable name -> (value, txn time)
 map<string, int> locked;
+// map: variable name -> thread locked
 pthread_mutex_t mutex_lock;
 pthread_barrier_t barrier;
+int global_txn_time;
 
 class operation {
 public:
@@ -51,8 +56,11 @@ void *thread_work(void *rank) {
 		if (txn != "BEGIN") break;
 		int id;
 		op >> id;
-		clock_t txn_time = clock();
-		result << id << ", BEGIN, " << txn_time << ',' << endl;
+		pthread_mutex_lock(&mutex_lock);
+		global_txn_time ++;
+		int txn_time = global_txn_time;
+		pthread_mutex_unlock(&mutex_lock);
+		result << id << ", BEGIN, " << clock() << ',' << endl;
 		temp_write.clear();
 		lock_var.clear();
 		string output = "";
@@ -108,7 +116,7 @@ void *thread_work(void *rank) {
 					if (belong == 0 || belong == my_rank)
 						break;
 					clock_t now = clock();
-					if ((belong < my_rank) && ((double)(now - start) / CLOCKS_PER_SEC > .001)) {
+					if ((belong < my_rank) && ((double)(now - start) / CLOCKS_PER_SEC > DEADLOCK_TIMEOUT)) {
 						//printf("%d\n", id);
 						deadlock = true;
 						break;
@@ -120,7 +128,7 @@ void *thread_work(void *rank) {
 						locked[(*it)] = 0;
 					pthread_mutex_unlock(&mutex_lock);
 					clock_t start = clock();
-					while ((double)(clock() - start) / CLOCKS_PER_SEC < .001);
+					while ((double)(clock() - start) / CLOCKS_PER_SEC < DEADLOCK_TIMEOUT);
 					lock_var.clear();
 					temp_write.clear();
 					output = "";
@@ -129,9 +137,10 @@ void *thread_work(void *rank) {
 				}
 				pthread_mutex_lock(&mutex_lock);
 				locked[var1] = my_rank;
+				global_txn_time ++;
+				mvcc_write(var1, val1, global_txn_time);
 				pthread_mutex_unlock(&mutex_lock);
 				temp_write[var1] = val1;
-				mvcc_write(var1, val1, clock());
 				lock_var.insert(var1);
 				output = output + to_string(id) + ", " + var1 + ", " + to_string(clock()) + ", " + to_string(val1) + "\n";
 			}
