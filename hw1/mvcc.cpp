@@ -139,8 +139,6 @@ void *thread_work(void *rank) {
 				}
 				pthread_mutex_lock(&mutex_lock);
 				locked[var1] = my_rank;
-				global_txn_time ++;
-				mvcc_write(var1, val1, global_txn_time);
 				pthread_mutex_unlock(&mutex_lock);
 				temp_write[var1] = val1;
 				lock_var.insert(var1);
@@ -150,8 +148,11 @@ void *thread_work(void *rank) {
 		}
 		if (!lock_var.empty()) {
 			pthread_mutex_lock(&mutex_lock);
-			for (auto it = lock_var.begin(); it != lock_var.end(); it ++)
+			global_txn_time ++;
+			for (auto it = lock_var.begin(); it != lock_var.end(); it ++) {
+				mvcc_write((*it), temp_write[*it], global_txn_time);
 				locked[(*it)] = 0;
+			}
 			pthread_mutex_unlock(&mutex_lock);
 		}
 		result << output;
