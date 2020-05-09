@@ -3,7 +3,7 @@
 using namespace std;
 
 map<string, vector<pair<int, int> > > mvcc;
-map<string, bool> locked;
+map<string, int> locked;
 pthread_mutex_t mutex_lock;
 pthread_barrier_t barrier;
 
@@ -103,14 +103,13 @@ void *thread_work(void *rank) {
 				bool deadlock = false;
 				while (1) {
 					pthread_mutex_lock(&mutex_lock);
-					if (!locked[var1]) {
-						pthread_mutex_unlock(&mutex_lock);
-						break;
-					}
+					int belong = locked[var1];
 					pthread_mutex_unlock(&mutex_lock);
+					if (belong == 0 || belong == my_rank)
+						break;
 					clock_t now = clock();
-					if ((double)(now - start) / CLOCKS_PER_SEC > .1) {
-						cout << "deadlock!" << endl;
+					if ((belong < my_rank) && ((double)(now - start) / CLOCKS_PER_SEC > .001)) {
+						//printf("%d\n", id);
 						deadlock = true;
 						break;
 					}
@@ -118,8 +117,10 @@ void *thread_work(void *rank) {
 				if (deadlock) {
 					pthread_mutex_lock(&mutex_lock);
 					for (auto it = lock_var.begin(); it != lock_var.end(); it ++)
-						locked[(*it)] = false;
+						locked[(*it)] = 0;
 					pthread_mutex_unlock(&mutex_lock);
+					clock_t start = clock();
+					while ((double)(clock() - start) / CLOCKS_PER_SEC < .001);
 					lock_var.clear();
 					temp_write.clear();
 					output = "";
@@ -127,7 +128,7 @@ void *thread_work(void *rank) {
 					continue;
 				}
 				pthread_mutex_lock(&mutex_lock);
-				locked[var1] = true;
+				locked[var1] = my_rank;
 				pthread_mutex_unlock(&mutex_lock);
 				temp_write[var1] = val1;
 				mvcc_write(var1, val1, clock());
@@ -139,7 +140,7 @@ void *thread_work(void *rank) {
 		if (!lock_var.empty()) {
 			pthread_mutex_lock(&mutex_lock);
 			for (auto it = lock_var.begin(); it != lock_var.end(); it ++)
-				locked[(*it)] = false;
+				locked[(*it)] = 0;
 			pthread_mutex_unlock(&mutex_lock);
 		}
 		result << output;
@@ -152,6 +153,7 @@ void *thread_work(void *rank) {
 }
 
 int main(int argc, char **argv) {
+	srand(time(0));
 	if (argc != 2) {
 		cout << "Failed to get thread number." << endl;
 		return 0;
