@@ -3,7 +3,7 @@
 using namespace std;
 using namespace chrono;
 
-#define DEADLOCK_TIMEOUT 0.0001
+//#define DEADLOCK_TIMEOUT 0.0001
 
 map<string, vector<pair<int, int> > > mvcc;
 // map: variable name -> (value, txn time)
@@ -47,7 +47,7 @@ void *thread_work(void *rank) {
 	ofstream result;
 	result.open("output_thread_" + to_string(my_rank) + ".csv", ios::out);
 	if (!result) return nullptr;
-	result << "transaction_id, type, time, value" << endl;
+	result << "transaction_id,type,time,value" << endl;
 	
 	map<string, int> temp_write;
 	set<string> lock_var;
@@ -61,8 +61,9 @@ void *thread_work(void *rank) {
 		pthread_mutex_lock(&mutex_lock);
 		global_txn_time ++;
 		int txn_time = global_txn_time;
+		long long time_now = duration_cast<nanoseconds>(system_clock::now() - init_time).count();
 		pthread_mutex_unlock(&mutex_lock);
-		result << id << ", BEGIN, " << duration_cast<nanoseconds>(system_clock::now() - init_time).count() << ',' << endl;
+		result << id << ",BEGIN," << time_now << ',' << endl;
 		temp_write.clear();
 		lock_var.clear();
 		string output = "";
@@ -91,12 +92,12 @@ void *thread_work(void *rank) {
 				string var = ops[cnt].var1;
 				if (temp_write.find(var) != temp_write.end()) {
 					int val = temp_write[var];
-					output = output + to_string(id) + ", " + var + ", " + to_string(duration_cast<nanoseconds>(system_clock::now() - init_time).count()) + ", " + to_string(val) + "\n";
+					output = output + to_string(id) + "," + var + "," + to_string(duration_cast<nanoseconds>(system_clock::now() - init_time).count()) + "," + to_string(val) + "\n";
 				} else {
 					pthread_mutex_lock(&mutex_lock);
 					int val = mvcc_read(var, txn_time);
 					pthread_mutex_unlock(&mutex_lock);
-					output = output + to_string(id) + ", " + var + ", " + to_string(duration_cast<nanoseconds>(system_clock::now() - init_time).count()) + ", " + to_string(val) + "\n";
+					output = output + to_string(id) + "," + var + "," + to_string(duration_cast<nanoseconds>(system_clock::now() - init_time).count()) + "," + to_string(val) + "\n";
 				}
 			} else {
 				string var1 = ops[cnt].var1, var2 = ops[cnt].var2, arith = ops[cnt].arith;
@@ -109,7 +110,6 @@ void *thread_work(void *rank) {
 					pthread_mutex_unlock(&mutex_lock);
 				}
 				if (arith == "+") val1 += val2; else val1 -= val2;
-				clock_t start = clock();
 				bool deadlock = false;
 				while (1) {
 					pthread_mutex_lock(&mutex_lock);
@@ -117,8 +117,7 @@ void *thread_work(void *rank) {
 					pthread_mutex_unlock(&mutex_lock);
 					if (belong == 0 || belong == my_rank)
 						break;
-					clock_t now = clock();
-					if ((belong < my_rank) && ((double)(now - start) / CLOCKS_PER_SEC > DEADLOCK_TIMEOUT)) {
+					if (belong < my_rank) {
 						//printf("%d\n", id);
 						deadlock = true;
 						break;
@@ -142,21 +141,20 @@ void *thread_work(void *rank) {
 				pthread_mutex_unlock(&mutex_lock);
 				temp_write[var1] = val1;
 				lock_var.insert(var1);
-				output = output + to_string(id) + ", " + var1 + ", " + to_string(duration_cast<nanoseconds>(system_clock::now() - init_time).count()) + ", " + to_string(val1) + "\n";
+				//output = output + to_string(id) + "," + var1 + "," + to_string(duration_cast<nanoseconds>(system_clock::now() - init_time).count()) + "," + to_string(val1) + "\n";
 			}
 			cnt ++;
 		}
-		if (!lock_var.empty()) {
-			pthread_mutex_lock(&mutex_lock);
-			global_txn_time ++;
-			for (auto it = lock_var.begin(); it != lock_var.end(); it ++) {
-				mvcc_write((*it), temp_write[*it], global_txn_time);
-				locked[(*it)] = 0;
-			}
-			pthread_mutex_unlock(&mutex_lock);
+		pthread_mutex_lock(&mutex_lock);
+		global_txn_time ++;
+		for (auto it = lock_var.begin(); it != lock_var.end(); it ++) {
+			mvcc_write((*it), temp_write[*it], global_txn_time);
+			locked[(*it)] = 0;
 		}
+		time_now = duration_cast<nanoseconds>(system_clock::now() - init_time).count();
+		pthread_mutex_unlock(&mutex_lock);
 		result << output;
-		result << id << ", END, " << duration_cast<nanoseconds>(system_clock::now() - init_time).count() << ',' << endl;
+		result << id << ",END," << time_now << ',' << endl;
 	}
 	
 	op.close();
