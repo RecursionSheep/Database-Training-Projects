@@ -128,8 +128,6 @@ void *thread_work(void *rank) {
 					for (auto it = lock_var.begin(); it != lock_var.end(); it ++)
 						locked[(*it)] = 0;
 					pthread_mutex_unlock(&mutex_lock);
-					clock_t start = clock();
-					while ((double)(clock() - start) / CLOCKS_PER_SEC < DEADLOCK_TIMEOUT);
 					lock_var.clear();
 					temp_write.clear();
 					output = "";
