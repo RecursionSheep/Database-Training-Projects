@@ -198,5 +198,10 @@ int main(int argc, char **argv) {
 	
 	pthread_mutex_destroy(&mutex_lock);
 	pthread_barrier_destroy(&barrier);
+	
+	for (auto it = mvcc.begin(); it != mvcc.end(); it ++) {
+		cout << (*it).first << ' ';
+		cout << (*it).second[(*it).second.size() - 1].first << endl;
+	}
 	return 0;
 }
