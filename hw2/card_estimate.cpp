@@ -4,7 +4,7 @@
 #define text false
 
 #define threshold 10000
-#define rate 0.025
+#define rate 0.01
 
 using namespace std;
 
@@ -519,12 +519,20 @@ void Query(string sqlFile, string outFile) {
 int main() {
 	ios::sync_with_stdio(false);
 	
+	clock_t st = clock();
 	buildTables();
-	cout << "loaded data" << endl;
+	clock_t t1 = clock();
+	cout << "loaded data: " << (double)(t1 - st) / CLOCKS_PER_SEC << "s" << endl;
 	
-	//Query("easy.sql", "easy.out");
+	Query("easy.sql", "easy.out");
+	clock_t t2 = clock();
+	cout << "easy: " << (double)(t2 - t1) / CLOCKS_PER_SEC << "s" << endl;
 	Query("middle.sql", "middle.out");
-	//Query("hard.sql", "hard.out");
+	clock_t t3 = clock();
+	cout << "middle: " << (double)(t3 - t2) / CLOCKS_PER_SEC << "s" << endl;
+	Query("hard.sql", "hard.out");
+	clock_t t4 = clock();
+	cout << "hard: " << (double)(t4 - t3) / CLOCKS_PER_SEC << "s" << endl;
 	
 	return 0;
 }
