@@ -3,7 +3,7 @@
 #define integer true
 #define text false
 
-#define threshold 10000
+#define threshold 100000
 #define rate 0.01
 
 using namespace std;
